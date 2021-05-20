@@ -1,0 +1,308 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed May 12 14:19:56 2021
+
+@author: koziel
+"""
+
+""" 1. Import libraries """
+import os
+os.chdir("//ug.kth.se/dfs/home/k/o/koziel/appdata/xp.V2/Documents/FEN3251/assignment 2")
+import pathlib
+import numpy as np
+import pandas as pd 
+import pandapower as pp 
+from pandapower.plotting import simple_plot
+from pandapower.timeseries import DFData
+from pandapower.timeseries import OutputWriter
+from pandapower.timeseries.run_time_series import run_timeseries
+from pandapower.control import ConstControl
+import matplotlib.pyplot as plt
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+import seaborn as sns 
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.model_selection import GridSearchCV
+
+
+""" 2. Create the network using pandapower """
+def network(s14=True, s45=True, s49=True, s56=True, s98=True, s63=True, \
+            s67=True, s28=True, s87=True, s5n5=True, s3n3=True, s9n9=True, s7n7=True, s2n2=True):
+    """ 9 bus system with 3 generators and 3 loads """
+    
+    net = pp.create_empty_network() #create an empty network
+    
+    # Buses
+    names_b = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+    names_n = ["5n", "9n", "3n", "2n", "7n"]
+    for i in range(len(names_b)): # create 9 bus bars
+        pp.create_bus(net, name=names_b[i], vn_kv=100, type="b")
+    for i in range(len(names_n)): # create nodes for loads and generators
+        pp.create_bus(net, name=names_n[i], vn_kv=100, type="n")
+    
+    # Lines
+    std_type = "149-AL1/24-ST1A 110.0"
+    length = 10
+    pp.create_line(net, pp.get_element_index(net, "bus", "1"), \
+                   pp.get_element_index(net, "bus", "4"), length_km = length, \
+                   std_type = std_type, name = "line_1-4")
+    pp.create_line(net, pp.get_element_index(net, "bus", "4"), \
+                   pp.get_element_index(net, "bus", "5"), length_km = length, \
+                   std_type = std_type, name = "line_4-5")
+    pp.create_line(net, pp.get_element_index(net, "bus", "4"), \
+                   pp.get_element_index(net, "bus", "9"), length_km = length, \
+                   std_type = std_type, name = "line_4-9")
+    pp.create_line(net, pp.get_element_index(net, "bus", "5"), \
+                   pp.get_element_index(net, "bus", "6"), length_km = length, \
+                   std_type = std_type, name = "line_5-6")
+    pp.create_line(net, pp.get_element_index(net, "bus", "6"), \
+                   pp.get_element_index(net, "bus", "3"), length_km = length, \
+                   std_type = std_type, name = "line_6-3")
+    pp.create_line(net, pp.get_element_index(net, "bus", "2"), \
+                   pp.get_element_index(net, "bus", "8"), length_km = length, \
+                   std_type = std_type, name = "line_2-8")
+    pp.create_line(net, pp.get_element_index(net, "bus", "8"), \
+                   pp.get_element_index(net, "bus", "7"), length_km = length, \
+                   std_type = std_type, name = "line_8-7")
+    pp.create_line(net, pp.get_element_index(net, "bus", "9"), \
+                   pp.get_element_index(net, "bus", "8"), length_km = length, \
+                   std_type = std_type, name = "line_9-8")
+    pp.create_line(net, pp.get_element_index(net, "bus", "6"), \
+                   pp.get_element_index(net, "bus", "7"), length_km = length, \
+                   std_type = std_type, name = "line_6-7")
+    
+    # Loads
+    pp.create_load(net, bus=pp.get_element_index(net, "bus", "5n"), p_mw=90, q_mvar=30, name="load_5")
+    pp.create_load(net, bus=pp.get_element_index(net, "bus", "7n"), p_mw=100, q_mvar=35, name="load_7")
+    pp.create_load(net, bus=pp.get_element_index(net, "bus", "9n"), p_mw=125, q_mvar=50, name="load_9")
+    
+    # Static generators
+    pp.create_sgen(net, bus=pp.get_element_index(net, "bus", "2n"), p_mw=163, q_mvar=0, name="generator_2")
+    pp.create_sgen(net, bus=pp.get_element_index(net, "bus", "3n"), p_mw=85, q_mvar=0, name="generator_3")
+
+    # External grid
+    pp.create_ext_grid(net, pp.get_element_index(net, "bus", "1"))
+    
+    # Switches
+    pp.create_switch(net, bus = pp.get_element_index(net, "bus", "1"), \
+                     element = pp.get_element_index(net, "line", "line_1-4"), \
+                     et = "l", name = "switch line 1-4", closed = s14)
+    pp.create_switch(net, bus = pp.get_element_index(net, "bus", "4"), \
+                     element = pp.get_element_index(net, "line", "line_4-5"), \
+                     et = "l", name = "switch line 4-5", closed = s45)
+    pp.create_switch(net, bus = pp.get_element_index(net, "bus", "9"), \
+                     element = pp.get_element_index(net, "line", "line_4-9"), \
+                     et = "l", name = "switch line 4-9", closed = s49)
+    pp.create_switch(net, bus = pp.get_element_index(net, "bus", "6"), \
+                     element = pp.get_element_index(net, "line", "line_5-6"), \
+                     et = "l", name = "switch line 5-6", closed = s56)
+    pp.create_switch(net, bus = pp.get_element_index(net, "bus", "6"), \
+                     element = pp.get_element_index(net, "line", "line_6-3"), \
+                     et = "l", name = "switch line 3-6", closed = s63)
+    pp.create_switch(net, bus = pp.get_element_index(net, "bus", "9"), \
+                     element = pp.get_element_index(net, "line", "line_9-8"), \
+                     et = "l", name = "switch line 4-5", closed = s98)
+    pp.create_switch(net, bus = pp.get_element_index(net, "bus", "6"), \
+                     element = pp.get_element_index(net, "line", "line_6-7"), \
+                     et = "l", name = "switch line 4-9", closed = s67)
+    pp.create_switch(net, bus = pp.get_element_index(net, "bus", "2"), \
+                     element = pp.get_element_index(net, "line", "line_2-8"), \
+                     et = "l", name = "switch line 5-6", closed = s28)
+    pp.create_switch(net, bus = pp.get_element_index(net, "bus", "7"), \
+                     element = pp.get_element_index(net, "line", "line_8-7"), \
+                     et = "l", name = "switch line 3-6", closed = s87)
+    
+    nb_load = [5, 7, 9]
+    name_s = [s5n5, s7n7, s9n9, s2n2, s3n3]
+    for i in range(len(nb_load)):
+        pp.create_switch(net, bus = pp.get_element_index(net, "bus", str(nb_load[i])), \
+                         element = pp.get_element_index(net, "bus", str(nb_load[i]) + "n"), \
+                         et = "b", name = "switch load " + str(nb_load[i]), \
+                         closed = name_s[i])
+    for i in range(len(net.sgen)):
+        pp.create_switch(net, bus = pp.get_element_index(net, "bus", str(i+2)), \
+                         element = pp.get_element_index(net, "bus", str(i+2) + "n"), \
+                         et = "b", name = "switch gen " + str(i+2), \
+                         closed = name_s[i+3])       
+    return net
+
+# Plotting the network
+net = network(s3n3=False, s56=False)
+print(net.bus)
+print(net.line)
+print(net.load)
+print(net.sgen)
+print(net.switch)
+print(net.ext_grid)
+simple_plot(net, respect_switches=True, line_width=3.0, \
+            bus_size=1.0, ext_grid_size=1.0, trafo_size=2.0, \
+            plot_loads=True, plot_sgens=True, load_size=2.0, \
+            sgen_size=3.0, switch_size=2.0, switch_distance=1.0,\
+            plot_line_switches=True, scale_size=True, \
+            bus_color='r', line_color='grey', trafo_color='k', \
+            ext_grid_color='y', switch_color='k', library='igraph',\
+            show_plot=True, ax=None)
+
+
+""" 3. Create the time series """
+def timeseries(n_timesteps, output_dir, s14=True, s45=True, s49=True, s56=True, \
+               s98=True, s63=True, s67=True, s28=True, s87=True, s5n5=True, \
+               s3n3=True, s9n9=True, s7n7=True, s2n2=True, change_p = 0, \
+               change_q = 0):
+    
+    # 1. create test net
+    net = network(s14, s45, s49, s56, s98, s63, s67, s28, s87, \
+                  s5n5, s3n3, s9n9, s7n7, s2n2)
+
+    # 2. create data source
+    profiles, ds = create_data_source(net, n_timesteps, change_p, change_q)
+    
+    # 3. create controllers (to control P values of the load and the sgen)
+    net = create_controllers(net, ds)
+
+    # 4. the output writer with the desired results to be stored to files.
+    time_steps = range(0, n_timesteps)
+    ow = create_output_writer(net, time_steps, output_dir)
+
+    # 5. the main time series function
+    run_timeseries(net, time_steps, calculate_voltage_angles=True)
+
+
+def create_data_source(net, n_timesteps, change_p, change_q):
+    
+    profiles = pd.DataFrame()
+    
+    # Loads
+    load_nb = [5, 7, 9]
+    for i in range(len(net.load)):
+        profiles["load" + str(load_nb[i]) + "_p"] = (net.load.p_mw.values[i] + change_p) * (1 + np.random.normal(0,0.1,n_timesteps))
+        profiles["load" + str(load_nb[i]) + "_q"] = (net.load.q_mvar.values[i] + change_q) * (1 + np.random.normal(0,0.1,n_timesteps))
+    
+    # Generators
+    for i in range(len(net.sgen)):
+        profiles["sgen" + str(i+2) + "_p"] = net.sgen.p_mw.values[i] * (1 + np.random.normal(0,0.1,n_timesteps))
+
+    ds = DFData(profiles)
+    return profiles, ds
+
+
+def create_controllers(net, ds):
+    
+    load_nb = [5, 7, 9]
+    for i in range(len(net.load)):
+        ConstControl(net, element='load', variable='p_mw', element_index=net.load.index[i],
+                     data_source=ds, profile_name=["load" + str(load_nb[i]) + "_p"])
+        ConstControl(net, element='load', variable='q_mvar', element_index=net.load.index[i],
+                     data_source=ds, profile_name=["load" + str(load_nb[i]) + "_q"])
+    
+    for i in range(len(net.sgen)):
+        ConstControl(net, element='sgen', variable='p_mw', element_index=net.sgen.index[i],
+                     data_source=ds, profile_name=["sgen" + str(i+2) + "_p"])
+
+    return net
+
+
+def create_output_writer(net, time_steps, output_dir):
+    ow = OutputWriter(net, time_steps, output_path=output_dir, output_file_type=".xls", log_variables=list())
+    # these variables are saved to the harddisk after / during the time series loop
+    ow.log_variable('res_bus', 'vm_pu')
+    ow.log_variable('res_bus', 'va_degree')
+    return ow
+
+# Run the time series for 5 different operating states
+steps = 100
+output_dir1 = os.path.join(pathlib.Path().absolute(), "normal_state")
+timeseries(n_timesteps=steps, output_dir=output_dir1)
+
+output_dir2 = os.path.join(pathlib.Path().absolute(), "high_load")
+timeseries(n_timesteps=steps, output_dir=output_dir2, change_p=10, change_q=5)
+
+output_dir3 = os.path.join(pathlib.Path().absolute(), "low_load")
+timeseries(n_timesteps=steps, output_dir=output_dir3, change_p=-10, change_q=-5)
+
+output_dir4 = os.path.join(pathlib.Path().absolute(), "G3_disconnnected")
+timeseries(n_timesteps=steps, output_dir=output_dir4, s3n3=False)
+
+output_dir5 = os.path.join(pathlib.Path().absolute(), "l56_disonnected")
+timeseries(n_timesteps=steps, output_dir=output_dir5, s56=False)
+
+
+# Create the dataset that willbe used for classification
+output = [output_dir1,output_dir2,output_dir3,output_dir4,output_dir5]
+# Labels: "normal_state" = 0, "high_load" = 1, "low_load" = 2, 
+#         "G3_disconnnected" = 3, "l56_disonnected" = 4
+df = []
+for i in range(len(output)):
+    magn_file = output[i] + "\\res_bus\\vm_pu.xls"
+    ang_file = output[i] + "\\res_bus\\va_degree.xls"
+    volt_magnitudes = pd.read_excel(magn_file)
+    volt_angles = pd.read_excel(ang_file)
+    merge = pd.concat([volt_magnitudes.iloc[:,1:10], volt_angles.iloc[:,1:10]], axis=1)
+    merge["label"] = i
+    df.append(merge)
+
+df = pd.concat(df, ignore_index=True)
+
+
+
+""" 4. Classification """
+# Data pre-processing
+X = df.iloc[:,0:17]
+y = df.iloc[:,18]
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2)
+
+# k-means clustering
+# Determine the number of clusters to select
+sse = [] # sum of the squared error (SSE) 
+for i in range(1, 11):
+    kmeans = KMeans(n_clusters=i, init='k-means++', max_iter=300, n_init=10, random_state=0)
+    kmeans.fit(X_train)
+    sse.append(kmeans.inertia_)
+
+plt.style.use("fivethirtyeight")
+plt.plot(range(1, 11), sse)
+plt.xticks(range(1, 11))
+plt.title('Elbow Method')
+plt.xlabel('Number of clusters')
+plt.ylabel('SSE')
+plt.show()
+
+kmeans = KMeans(n_clusters=5, init='k-means++', max_iter=300, n_init=10, random_state=0).fit(X_train)
+kmeans_predict = kmeans.predict(X_test)
+
+# Plotting voltage magnitude and angle for each bus, together with the label (in colour)
+y_test = y_test.to_numpy()
+figure, axis = plt.subplots(3, 3)
+# Plots with labels given by the algorithm
+for i in range(3):
+    for j in range(3):
+        X_plot = pd.DataFrame(X_test[:,[i+j,i+j+9]], columns=["vm_pu", "va_degree"])
+        sns.scatterplot(data=X_plot, x="vm_pu", y="va_degree", \
+                        hue=kmeans_predict, palette="coolwarm_r", ax=axis[i,j])
+# Plots with real labels
+figure, axis = plt.subplots(3, 3)
+for i in range(3):
+    for j in range(3):
+        X_plot = pd.DataFrame(X_test[:,[i+j,i+j+9]], columns=["vm_pu", "va_degree"])
+        sns.scatterplot(data=X_plot, x="vm_pu", y="va_degree", \
+                        hue=y_test, palette="coolwarm_r", ax=axis[i,j])
+            
+
+
+# KNN classifier
+parameters = {"n_neighbors": range(1, 50)}
+gridsearch = GridSearchCV(KNeighborsClassifier(), parameters, verbose=3)
+gridsearch.fit(X_train, y_train)
+gridsearch.best_params_
+
+knn_model = KNeighborsClassifier(n_neighbors=5)
+knn = knn_model.fit(X_train, y_train)
+knn_predict = knn.predict(X_test)
+from sklearn.metrics import confusion_matrix
+print(knn.score(X_test, y_test))
+print(confusion_matrix(y_test, knn_predict))
